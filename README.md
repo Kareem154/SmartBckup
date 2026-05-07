@@ -21,7 +21,7 @@ It provides:
 
 ## Requirements
 
-- PHP `^8.2`
+- PHP `^8.2|^8.3`
 - Laravel `^11.0|^12.0|^13.0`
 - `spatie/laravel-backup`
 - `ZipArchive` PHP extension
@@ -400,6 +400,18 @@ composer require karim/smart-backup:^1.0
 - Authorization is handled by the host application.
 - Protect backup routes with middleware.
 - Backup files may contain sensitive data.
+
+---
+
+## Author
+
+**Karim Mohamed**
+
+Package name:
+
+```text
+karim/smart-backup
+```
 
 ---
 
