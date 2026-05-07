@@ -34,7 +34,7 @@ It provides:
 Install the package:
 
 ```bash
-composer require karim/smart-backup:^1.0
+composer require karim-dev/smart-backup:^1.0
 ```
 
 Publish config and migration:
@@ -344,7 +344,7 @@ For local package development before publishing:
 ```json
 {
     "require": {
-        "karim/smart-backup": "^1.0"
+        "karim-dev/smart-backup": "^1.0"
     },
     "repositories": [
         {
@@ -353,7 +353,7 @@ For local package development before publishing:
             "options": {
                 "symlink": true,
                 "versions": {
-                    "karim/smart-backup": "1.0.0"
+                    "karim-dev/smart-backup": "1.0.0"
                 }
             }
         }
@@ -364,7 +364,7 @@ For local package development before publishing:
 Then run:
 
 ```bash
-composer update karim/smart-backup -W
+composer update karim-dev/smart-backup -W
 php artisan smart-backup:install
 php artisan migrate
 ```
@@ -388,7 +388,7 @@ git push origin v1.0.0
 Users can then install:
 
 ```bash
-composer require karim/smart-backup:^1.0
+composer require karim-dev/smart-backup:^1.0
 ```
 
 ---
@@ -410,7 +410,7 @@ composer require karim/smart-backup:^1.0
 Package name:
 
 ```text
-karim/smart-backup
+karim-dev/smart-backup
 ```
 
 ---
