@@ -1,5 +1,5 @@
 {
-    "name": "karim/smart-backup",
+    "name": "karim-dev/smart-backup",
     "description": "A Laravel package for creating and managing database and storage backups.",
     "type": "library",
     "license": "MIT",
