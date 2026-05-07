@@ -1,0 +1,81 @@
+<?php
+
+namespace Karim\SmartBackup\Services;
+
+use Illuminate\Support\Facades\Storage;
+use RuntimeException;
+use ZipArchive;
+
+class BackupFileOrganizer
+{
+    public function reorganize(string $backupPath): string
+    {
+        if (! config('smart-backup.reorganize_zip', true)) {
+            return $backupPath;
+        }
+
+        $disk = Storage::disk(config('smart-backup.disk', 'local'));
+
+        if (! $disk->exists($backupPath)) {
+            throw new RuntimeException("Backup file does not exist: {$backupPath}");
+        }
+
+        $fullPath = $disk->path($backupPath);
+        $tempPath = $fullPath . '.temp';
+
+        $zip = new ZipArchive();
+        $newZip = new ZipArchive();
+
+        if ($zip->open($fullPath) !== true) {
+            throw new RuntimeException("Unable to open backup zip: {$backupPath}");
+        }
+
+        if ($newZip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            $zip->close();
+
+            throw new RuntimeException("Unable to create temporary backup zip: {$tempPath}");
+        }
+
+        $projectFolder = $this->projectFolderName($backupPath);
+
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $filename = $zip->getNameIndex($i);
+
+            if ($filename === false) {
+                continue;
+            }
+
+            $content = $zip->getFromIndex($i);
+
+            if ($content === false) {
+                continue;
+            }
+
+            $newFilename = str_starts_with($filename, 'db-dumps/')
+                ? $filename
+                : $projectFolder . '/' . ltrim($filename, '/');
+
+            $newZip->addFromString($newFilename, $content);
+        }
+
+        $zip->close();
+        $newZip->close();
+
+        @unlink($fullPath);
+
+        if (! @rename($tempPath, $fullPath)) {
+            throw new RuntimeException("Unable to replace original backup zip: {$backupPath}");
+        }
+
+        return $backupPath;
+    }
+
+    private function projectFolderName(string $backupPath): string
+    {
+        $prefix = trim((string) config('smart-backup.project_folder_prefix', 'backup-project'), '-');
+
+        $filename = pathinfo($backupPath, PATHINFO_FILENAME);
+
+        return "{$prefix}-{$filename}";
+    }
+}

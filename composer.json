@@ -1,0 +1,25 @@
+{
+    "name": "karim/smart-backup",
+    "description": "A Laravel package for creating and managing database and storage backups.",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Karim\\SmartBackup\\": "src/"
+        }
+    },
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^11.0|^12.0",
+        "spatie/laravel-backup": "^9.0|^10.0"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Karim\\SmartBackup\\SmartBackupServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
