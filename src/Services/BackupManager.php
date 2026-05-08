@@ -12,12 +12,24 @@ use Throwable;
 
 class BackupManager
 {
+    /**
+     * Run a new smart backup.
+     *
+     * This method creates a database record, configures Spatie Laravel Backup
+     * at runtime, runs the backup command, then stores the final backup metadata.
+     *
+     * The host Laravel application should not need to manually configure
+     * mysqldump inside config/database.php. Smart Backup tries to detect and
+     * inject the dump binary path automatically before Spatie runs.
+     *
+     * @throws \Throwable
+     */
     public function run(): BackupRunResult
     {
         $diskName = config('smart-backup.disk', 'local');
 
         $backup = Backup::query()->create([
-            'name' => 'backup-running-' . now()->format('Y-m-d_H-i-s') . '.zip',
+            'name' => 'backup-running-'.now()->format('Y-m-d_H-i-s').'.zip',
             'disk' => $diskName,
             'path' => '',
             'status' => 'running',
@@ -28,29 +40,65 @@ class BackupManager
             $temporaryDirectory = $this->temporaryDirectory();
             $originalSpatieConfig = $this->captureSpatieConfig();
 
-            $this->configureSpatieBackup($temporaryDirectory);
+            /*
+             * Configure the database dump path before building Spatie's runtime
+             * config. This ensures Spatie receives the updated database connection
+             * dump settings when it creates the backup job.
+             */
             $this->configureDatabaseDumpPath();
+            $this->configureSpatieBackup($temporaryDirectory);
 
-            app()->bind('backup-temporary-project', fn () => new SmartBackupTemporaryDirectory($temporaryDirectory));
+            /*
+             * Spatie resolves this binding internally for its temporary project
+             * directory. We override it to prevent Spatie from deleting the
+             * temporary directory before Smart Backup finishes processing.
+             */
+            app()->bind(
+                'backup-temporary-project',
+                fn () => new SmartBackupTemporaryDirectory($temporaryDirectory)
+            );
+
+            app()->forgetInstance(SpatieBackupConfig::class);
+
+            app()->instance(
+                SpatieBackupConfig::class,
+                SpatieBackupConfig::fromArray(config('backup'))
+            );
 
             $exitCode = Artisan::call(
-                config('smart-backup.spatie_command', 'backup:run'),
-                ['--config' => 'smart-backup-spatie-runtime']
+                config('smart-backup.spatie_command', 'backup:run')
             );
+
             $output = trim(Artisan::output());
 
-            $this->restoreSpatieConfig($originalSpatieConfig);
-
-            File::deleteDirectory($temporaryDirectory);
-
-            if ($exitCode !== 0) {
+            /*
+             * Some Spatie versions may return a successful console exit code
+             * while still printing a backup failure message. We detect both the
+             * exit code and known failure text to avoid hiding the real error
+             * behind "No backup zip files found".
+             */
+            if (
+                $exitCode !== 0
+                || str_contains($output, 'Backup failed because')
+                || str_contains($output, 'The dump process failed')
+            ) {
                 throw new RuntimeException($output !== ''
                     ? "Spatie backup command failed: {$output}"
                     : "Spatie backup command failed with exit code {$exitCode}."
                 );
             }
 
-            $latestBackupPath = app(BackupFileFinder::class)->latest();
+            try {
+                $latestBackupPath = app(BackupFileFinder::class)->latest();
+            } catch (RuntimeException $e) {
+                throw new RuntimeException(
+                    "Smart Backup could not find the generated backup zip.\n\n".
+                    "Spatie output:\n".
+                    ($output !== '' ? $output : '[empty output]')."\n\n".
+                    "Finder error:\n".
+                    $e->getMessage()
+                );
+            }
 
             $latestBackupPath = app(BackupFileOrganizer::class)->reorganize($latestBackupPath);
 
@@ -91,6 +139,10 @@ class BackupManager
 
             throw $e;
         } finally {
+            /*
+             * Always restore the original config and remove temporary files,
+             * whether the backup succeeds or fails.
+             */
             if (isset($originalSpatieConfig)) {
                 $this->restoreSpatieConfig($originalSpatieConfig);
             }
@@ -101,6 +153,13 @@ class BackupManager
         }
     }
 
+    /**
+     * Move the generated backup zip to Smart Backup's managed directory.
+     *
+     * Spatie may generate the zip inside a folder named after the host application.
+     * Smart Backup keeps only the managed copy and removes the original generated
+     * file to avoid duplicated backup folders.
+     */
     private function moveToManagedDirectory(string $sourcePath): string
     {
         $disk = Storage::disk(config('smart-backup.disk', 'local'));
@@ -122,66 +181,149 @@ class BackupManager
             return $destinationPath;
         }
 
-        $content = $disk->get($sourcePath);
-        $disk->put($destinationPath, $content);
+        /*
+         * Copy the generated zip to the managed backup directory first.
+         * We delete the original only after the destination copy exists.
+         */
+        $disk->put($destinationPath, $disk->get($sourcePath));
+
+        if (! $disk->exists($destinationPath)) {
+            throw new RuntimeException("Unable to move backup file to managed directory: {$destinationPath}");
+        }
+
+        /*
+         * Remove Spatie's original generated zip so the disk contains only
+         * Smart Backup's managed backup folder.
+         */
+        if ($disk->exists($sourcePath)) {
+            $disk->delete($sourcePath);
+        }
+
+        $this->deleteEmptyParentDirectory($sourcePath, $directory);
 
         return $destinationPath;
     }
 
-   private function captureSpatieConfig(): array
-{
-    $config = [
-        'backup.backup.name' => config('backup.backup.name'),
-        'backup.backup.temporary_directory' => config('backup.backup.temporary_directory'),
-        'backup.backup.source.files.include' => config('backup.backup.source.files.include'),
-        'backup.backup.source.files.exclude' => config('backup.backup.source.files.exclude'),
-        'backup.backup.source.files.relative_path' => config('backup.backup.source.files.relative_path'),
-        'smart-backup-spatie-runtime' => config('smart-backup-spatie-runtime'),
-    ];
+    /**
+     * Delete the source parent directory if it becomes empty.
+     *
+     * This removes folders like "zamil" after moving the zip to "backups",
+     * but it never deletes the managed backup directory itself.
+     */
+    private function deleteEmptyParentDirectory(string $sourcePath, string $managedDirectory): void
+    {
+        $disk = Storage::disk(config('smart-backup.disk', 'local'));
 
-    foreach ($this->backupDatabaseConnectionNames() as $connection) {
-        $config["database.connections.{$connection}"] = config("database.connections.{$connection}");
+        $parentDirectory = trim(dirname($sourcePath), '/\\.');
+
+        if (
+            $parentDirectory === ''
+            || $parentDirectory === '.'
+            || $parentDirectory === $managedDirectory
+        ) {
+            return;
+        }
+
+        if (! $disk->exists($parentDirectory)) {
+            return;
+        }
+
+        if ($disk->allFiles($parentDirectory) !== []) {
+            return;
+        }
+
+        if ($disk->directories($parentDirectory) !== []) {
+            return;
+        }
+
+        $disk->deleteDirectory($parentDirectory);
     }
 
-    return $config;
-}
+    /**
+     * Capture the original config values that Smart Backup changes at runtime.
+     *
+     * @return array<string, mixed>
+     */
+    private function captureSpatieConfig(): array
+    {
+        $config = [
+            'backup' => config('backup'),
+            'smart-backup-spatie-runtime' => config('smart-backup-spatie-runtime'),
+        ];
 
+        foreach ($this->backupDatabaseConnectionNames() as $connection) {
+            $config["database.connections.{$connection}"] = config("database.connections.{$connection}");
+        }
+
+        return $config;
+    }
+
+    /**
+     * Configure Spatie Laravel Backup for the current Smart Backup run.
+     *
+     * This method changes Spatie's backup name, temporary directory, source
+     * paths, excluded paths, relative path, and database list at runtime.
+     */
     private function configureSpatieBackup(string $temporaryDirectory): void
-{
-    $sourcePaths = $this->backupSourcePaths();
-    $excludedSourcePaths = $this->excludedSourcePaths();
+    {
+        $sourcePaths = $this->backupSourcePaths();
+        $excludedSourcePaths = $this->excludedSourcePaths();
 
-    if ($sourcePaths === []) {
-        throw new RuntimeException('No backup source paths exist.');
+        if ($sourcePaths === []) {
+            throw new RuntimeException('No backup source paths exist.');
+        }
+
+        $runtimeConfig = config('backup');
+
+        $backupFolderName = trim((string) config('smart-backup.storage_directory', 'backups'), '/');
+
+        if ($backupFolderName === '') {
+            $backupFolderName = 'backups';
+        }
+
+        /*
+         * Force Spatie to create backups directly inside Smart Backup's managed
+         * directory instead of using the host application's APP_NAME.
+         */
+        data_set($runtimeConfig, 'backup.name', $backupFolderName);
+        data_set($runtimeConfig, 'backup.temporary_directory', $temporaryDirectory);
+        data_set($runtimeConfig, 'backup.source.files.include', $sourcePaths);
+        data_set($runtimeConfig, 'backup.source.files.exclude', $excludedSourcePaths);
+        data_set($runtimeConfig, 'backup.source.files.relative_path', storage_path());
+        data_set($runtimeConfig, 'backup.source.databases', $this->backupDatabaseConnectionNames());
+
+        /*
+         * Important:
+         * Set the full "backup" config root, not only nested keys.
+         * This prevents Spatie from reading stale values such as APP_NAME/zamil.
+         */
+        config([
+            'backup' => $runtimeConfig,
+            'smart-backup-spatie-runtime' => $runtimeConfig,
+        ]);
+
+        /*
+         * Force Spatie to use the fresh runtime config object.
+         * Using instance() is stronger here than scoped(), because the console
+         * command may resolve the config from the container during the same run.
+         */
+        app()->forgetInstance(SpatieBackupConfig::class);
+
+        app()->instance(
+            SpatieBackupConfig::class,
+            SpatieBackupConfig::fromArray($runtimeConfig)
+        );
     }
 
-    $runtimeConfig = config('backup');
-
-    $backupFolderName = trim((string) config('smart-backup.storage_directory', 'backups'), '/');
-
-    if ($backupFolderName === '') {
-        $backupFolderName = 'backups';
-    }
-
-    data_set($runtimeConfig, 'backup.name', $backupFolderName);
-    data_set($runtimeConfig, 'backup.temporary_directory', $temporaryDirectory);
-    data_set($runtimeConfig, 'backup.source.files.include', $sourcePaths);
-    data_set($runtimeConfig, 'backup.source.files.exclude', $excludedSourcePaths);
-    data_set($runtimeConfig, 'backup.source.files.relative_path', storage_path());
-
-    config([
-        'backup.backup.name' => $backupFolderName,
-        'backup.backup.temporary_directory' => $temporaryDirectory,
-        'backup.backup.source.files.include' => $sourcePaths,
-        'backup.backup.source.files.exclude' => $excludedSourcePaths,
-        'backup.backup.source.files.relative_path' => storage_path(),
-        'smart-backup-spatie-runtime' => $runtimeConfig,
-    ]);
-
-    app()->forgetInstance(SpatieBackupConfig::class);
-    app()->scoped(SpatieBackupConfig::class, fn (): SpatieBackupConfig => SpatieBackupConfig::fromArray($runtimeConfig));
-}
-
+    /**
+     * Detect and inject the mysqldump path for MySQL/MariaDB connections.
+     *
+     * Smart Backup tries to find mysqldump automatically using:
+     * - SMART_BACKUP_MYSQL_DUMP_BINARY_PATH
+     * - MYSQL_DUMP_BINARY_PATH
+     * - system PATH
+     * - common local/server paths such as XAMPP, Laragon, WAMP, /usr/bin
+     */
     private function configureDatabaseDumpPath(): void
     {
         $connections = collect($this->backupDatabaseConnectionNames())
@@ -196,29 +338,57 @@ class BackupManager
             return;
         }
 
-        $dumpBinaryPath = app(MySqlDumpPathResolver::class)->resolve(config('smart-backup.mysql.dump_binary_path'));
+        $dumpBinaryPath = app(MySqlDumpPathResolver::class)
+            ->resolve(config('smart-backup.mysql.dump_binary_path'));
 
         if ($dumpBinaryPath === null) {
-            throw new RuntimeException('mysqldump was not found. Please install MySQL client tools or set SMART_BACKUP_MYSQL_DUMP_BINARY_PATH in your .env file. Examples: C:/xampp/mysql/bin or /usr/bin.');
+            throw new RuntimeException(
+                'mysqldump was not found. Smart Backup tried to detect it automatically, but could not find it. '.
+                'Install MySQL client tools or set SMART_BACKUP_MYSQL_DUMP_BINARY_PATH. '.
+                'Examples: C:/xampp/mysql/bin or /usr/bin.'
+            );
         }
 
         foreach ($connections as $connection) {
+            $connectionConfig = config("database.connections.{$connection}", []);
+
+            $connectionConfig['dump'] = array_merge($connectionConfig['dump'] ?? [], [
+                'dump_binary_path' => $dumpBinaryPath,
+                'use_single_transaction' => filter_var(
+                    config('smart-backup.mysql.use_single_transaction', true),
+                    FILTER_VALIDATE_BOOLEAN
+                ),
+                'timeout' => (int) config('smart-backup.mysql.dump_timeout', 300),
+            ]);
+
             config([
-                "database.connections.{$connection}.dump.dump_binary_path" => $dumpBinaryPath,
-                "database.connections.{$connection}.dump.use_single_transaction" => filter_var(config('smart-backup.mysql.use_single_transaction', true), FILTER_VALIDATE_BOOLEAN),
-                "database.connections.{$connection}.dump.timeout" => (int) config('smart-backup.mysql.dump_timeout', 300),
+                "database.connections.{$connection}" => $connectionConfig,
             ]);
         }
     }
 
+    /**
+     * Restore Spatie and database config values after a backup run.
+     *
+     * @param  array<string, mixed>  $originalSpatieConfig
+     */
     private function restoreSpatieConfig(array $originalSpatieConfig): void
     {
         config($originalSpatieConfig);
 
         app()->forgetInstance(SpatieBackupConfig::class);
-        app()->scoped(SpatieBackupConfig::class, fn (): SpatieBackupConfig => SpatieBackupConfig::fromArray(config('backup')));
+
+        app()->instance(
+            SpatieBackupConfig::class,
+            SpatieBackupConfig::fromArray(config('backup'))
+        );
     }
 
+    /**
+     * Get backup source paths that currently exist.
+     *
+     * @return array<int, string>
+     */
     private function backupSourcePaths(): array
     {
         return collect(config('smart-backup.source.paths', [storage_path('app')]))
@@ -227,6 +397,11 @@ class BackupManager
             ->all();
     }
 
+    /**
+     * Get excluded source paths that currently exist.
+     *
+     * @return array<int, string>
+     */
     private function excludedSourcePaths(): array
     {
         return collect(config('smart-backup.source.exclude', []))
@@ -235,26 +410,49 @@ class BackupManager
             ->all();
     }
 
+    /**
+     * Get the database connections that should be included in the backup.
+     *
+     * If Spatie's database list is empty or invalid, Smart Backup falls back
+     * to the default Laravel database connection.
+     *
+     * @return array<int, string>
+     */
     private function backupDatabaseConnectionNames(): array
     {
-        return collect(config('backup.backup.source.databases', [config('database.default')]))
+        $connections = config('backup.backup.source.databases');
+
+        if (! is_array($connections) || $connections === []) {
+            $connections = [config('database.default')];
+        }
+
+        return collect($connections)
             ->filter(fn (mixed $connection): bool => is_string($connection) && $connection !== '')
             ->values()
             ->all();
     }
 
+    /**
+     * Build a unique temporary directory path for the current backup run.
+     *
+     *
+     * @throws \Random\RandomException
+     */
     private function temporaryDirectory(): string
     {
         $root = config('smart-backup.temporary_directory') ?: sys_get_temp_dir();
 
         return rtrim((string) $root, DIRECTORY_SEPARATOR)
-            . DIRECTORY_SEPARATOR
-            . 'smart-backup-'
-            . now()->format('YmdHisv')
-            . '-'
-            . bin2hex(random_bytes(4));
+            .DIRECTORY_SEPARATOR
+            .'smart-backup-'
+            .now()->format('YmdHisv')
+            .'-'
+            .bin2hex(random_bytes(4));
     }
 
+    /**
+     * Determine whether old backups should be deleted after a successful run.
+     */
     private function shouldCleanupOldBackups(): bool
     {
         return ! filter_var(config('smart-backup.keep_backups', true), FILTER_VALIDATE_BOOLEAN);

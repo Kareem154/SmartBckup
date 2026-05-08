@@ -18,6 +18,17 @@ class SmartBackupServiceProvider extends ServiceProvider
             __DIR__.'/../config/smart-backup.php',
             'smart-backup'
         );
+
+        /*
+         * Force Spatie Backup to use Smart Backup's managed directory name
+         * as early as possible.
+         *
+         * Without this, Spatie may keep using the host app name / APP_NAME
+         * such as "zamil", then Smart Backup has to move the generated zip later.
+         */
+        $this->app->booting(function (): void {
+            $this->forceSpatieBackupName();
+        });
     }
 
     public function boot(): void
@@ -40,6 +51,41 @@ class SmartBackupServiceProvider extends ServiceProvider
                 DeleteSmartBackupCommand::class,
             ]);
         }
+    }
+
+    /**
+     * Force Spatie Laravel Backup to write directly into Smart Backup's
+     * managed backup directory.
+     *
+     * This prevents Spatie from creating a folder named after the host
+     * application, such as "zamil", before Smart Backup moves the zip.
+     */
+    private function forceSpatieBackupName(): void
+    {
+        $backupConfig = config('backup');
+
+        if (! is_array($backupConfig)) {
+            return;
+        }
+
+        $backupFolderName = trim((string) config('smart-backup.storage_directory', 'backups'), '/');
+
+        if ($backupFolderName === '') {
+            $backupFolderName = 'backups';
+        }
+
+        data_set($backupConfig, 'backup.name', $backupFolderName);
+
+        config([
+            'backup' => $backupConfig,
+        ]);
+
+        $this->app->forgetInstance(SpatieBackupConfig::class);
+
+        $this->app->singleton(
+            SpatieBackupConfig::class,
+            fn (): SpatieBackupConfig => SpatieBackupConfig::fromArray(config('backup'))
+        );
     }
 
     private function registerRouteMacro(): void

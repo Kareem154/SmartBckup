@@ -2,141 +2,51 @@
 
 A simple Laravel package for creating and managing database and storage backups.
 
-The package uses `spatie/laravel-backup` to create the backup file, then stores backup records in its own table.
+Smart Backup uses `spatie/laravel-backup` internally, but adds a cleaner workflow:
 
-It provides:
-
-- create backup
-- list backups
-- download backup
-- delete backup
-- bulk delete backups
-- Artisan commands
-- route macro
-- config and migration publishing
-
-> This package does not include dashboard views or restore functionality.
+- Creates database and storage backups.
+- Saves backup records in the database.
+- Provides Artisan commands.
+- Provides optional routes for dashboard/API usage.
+- Automatically detects `mysqldump` when possible.
+- Saves backups in one managed folder, default: `backups`.
 
 ---
 
 ## Requirements
 
-- PHP `^8.2|^8.3`
+- PHP `^8.2`
 - Laravel `^11.0|^12.0|^13.0`
-- `spatie/laravel-backup`
-- `ZipArchive` PHP extension
-- `mysqldump` for MySQL/MariaDB database backups
+- MySQL/MariaDB requires `mysqldump`
 
 ---
 
 ## Installation
 
-Install the package:
-
 ```bash
 composer require karim-dev/smart-backup:^1.0
+```
+
+If Composer needs to update related dependencies:
+
+```bash
+composer require karim-dev/smart-backup:^1.0 -W
 ```
 
 Publish config and migration:
 
 ```bash
 php artisan smart-backup:install
-```
-
-Run migrations:
-
-```bash
 php artisan migrate
 ```
 
----
-
-## Publish Files Manually
-
-Publish config only:
-
-```bash
-php artisan vendor:publish --tag=smart-backup-config
-```
-
-Publish migration only:
-
-```bash
-php artisan vendor:publish --tag=smart-backup-migrations
-```
-
-Published config file:
-
-```text
-config/smart-backup.php
-```
+> `smart-backup:install` already publishes the migration. Do not publish the migration again unless you need another copy.
 
 ---
 
-## Environment Variables
+## Usage
 
-Add what you need to your `.env` file:
-
-```env
-SMART_BACKUP_DISK=local
-SMART_BACKUP_DIRECTORY=backups
-SMART_BACKUP_TEMPORARY_DIRECTORY=
-SMART_BACKUP_SOURCE_FOLDER=
-SMART_BACKUP_KEEP_BACKUPS=true
-SMART_BACKUP_PREVENT_DELETE_LAST=true
-SMART_BACKUP_REORGANIZE_ZIP=true
-SMART_BACKUP_PROJECT_FOLDER_PREFIX=backup-project
-SMART_BACKUP_SPATIE_COMMAND=backup:run
-SMART_BACKUP_MYSQL_DUMP_BINARY_PATH=
-SMART_BACKUP_MYSQL_DUMP_TIMEOUT=300
-SMART_BACKUP_MYSQL_SINGLE_TRANSACTION=true
-```
-
-Example for Windows XAMPP:
-
-```env
-SMART_BACKUP_MYSQL_DUMP_BINARY_PATH=C:/xampp/mysql/bin
-```
-
-Example for Linux/VPS/cPanel:
-
-```env
-SMART_BACKUP_MYSQL_DUMP_BINARY_PATH=/usr/bin
-```
-
----
-
-## What Gets Backed Up
-
-By default, the package backs up:
-
-- database dump
-- `storage/app`
-- `storage/demo` if it exists
-
-It does not back up the full Laravel project.
-
-Not included by default:
-
-- `.env`
-- `vendor`
-- `app`
-- `routes`
-- `resources`
-- `storage/logs`
-- `storage/framework`
-
----
-
-## Artisan Commands
-
-Install package files:
-
-```bash
-php artisan smart-backup:install
-```
-
-Create backup:
+Create a backup:
 
 ```bash
 php artisan smart-backup:run
@@ -148,31 +58,170 @@ List backups:
 php artisan smart-backup:list
 ```
 
-Delete backup:
+Delete a backup:
 
 ```bash
 php artisan smart-backup:delete {id}
 ```
 
-Delete backup without confirmation:
+Force delete:
 
 ```bash
 php artisan smart-backup:delete {id} --force
 ```
 
+---
+
+## What Is Backed Up?
+
+By default, Smart Backup includes:
+
+```text
+storage/app
+storage/demo
+```
+
+`storage/demo` is included only if it exists.
+
+Smart Backup does **not** back up the full Laravel project.
+
+It does not include:
+
+```text
+.env
+vendor/
+app/
+routes/
+resources/
+storage/framework/
+storage/logs/
+```
+
+---
+
+## Backup Location
+
+By default, backups are saved in:
+
+```text
+storage/app/private/backups
+```
+
 Example:
 
-```bash
-php artisan smart-backup:delete 1 --force
+```text
+storage/app/private/
+└── backups/
+    ├── 2026-05-09-01-00-51.zip
+    └── 2026-05-09-01-01-48.zip
 ```
+
+Smart Backup avoids keeping extra folders named after the project, such as:
+
+```text
+storage/app/private/zamil
+storage/app/private/Laravel
+```
+
+The final backup files should be kept inside the managed `backups` folder.
+
+---
+
+## Configuration
+
+The config file is published here:
+
+```text
+config/smart-backup.php
+```
+
+Most projects do **not** need to add anything to `.env`.
+
+Optional `.env` values:
+
+```env
+SMART_BACKUP_DISK=local
+SMART_BACKUP_DIRECTORY=backups
+SMART_BACKUP_KEEP_BACKUPS=true
+SMART_BACKUP_PREVENT_DELETE_LAST=true
+SMART_BACKUP_MYSQL_DUMP_BINARY_PATH=
+SMART_BACKUP_MYSQL_DUMP_TIMEOUT=300
+SMART_BACKUP_MYSQL_SINGLE_TRANSACTION=true
+```
+
+---
+
+## Optional Settings
+
+### Change backup folder
+
+Default:
+
+```env
+SMART_BACKUP_DIRECTORY=backups
+```
+
+Example:
+
+```env
+SMART_BACKUP_DIRECTORY=system-backups
+```
+
+---
+
+### Keep only the latest backup
+
+Default is to keep all backups:
+
+```env
+SMART_BACKUP_KEEP_BACKUPS=true
+```
+
+To delete old backups after a successful new backup:
+
+```env
+SMART_BACKUP_KEEP_BACKUPS=false
+```
+
+---
+
+### Prevent deleting the last backup
+
+Default:
+
+```env
+SMART_BACKUP_PREVENT_DELETE_LAST=true
+```
+
+---
+
+### Custom `mysqldump` path
+
+Normally, you do not need this.
+
+Smart Backup tries to detect `mysqldump` automatically from common paths like XAMPP, Laragon, WAMP, `/usr/bin`, and `/usr/local/bin`.
+
+If detection fails, set:
+
+```env
+SMART_BACKUP_MYSQL_DUMP_BINARY_PATH=C:/xampp/mysql/bin
+```
+
+or on Linux/cPanel:
+
+```env
+SMART_BACKUP_MYSQL_DUMP_BINARY_PATH=/usr/bin
+```
+
+You do **not** need to edit `config/database.php`.
 
 ---
 
 ## Routes
 
-The package does not register routes automatically.
+Smart Backup registers a route macro.
 
-Add the route macro in your host app route file:
+It does not load routes automatically.
 
 ```php
 use Illuminate\Support\Facades\Route;
@@ -183,20 +232,11 @@ Route::smartBackup();
 Default routes:
 
 ```text
-GET     /backup                    backup.index
-POST    /backup                    backup.store
-GET     /backup/{backup}/download  backup.download
-DELETE  /backup/{backup}           backup.destroy
-DELETE  /backup                    backup.bulk-destroy
-```
-
-Custom prefix and names:
-
-```php
-Route::smartBackup([
-    'prefix' => 'backups',
-    'name' => 'backups.',
-]);
+GET     /backup
+POST    /backup
+GET     /backup/{backup}/download
+DELETE  /backup/{backup}
+DELETE  /backup
 ```
 
 Dashboard example:
@@ -210,196 +250,68 @@ Route::prefix('dashboard')
     });
 ```
 
-Admin dashboard example:
+---
 
-```php
-Route::prefix('dashboard')
-    ->name('dashboard.')
-    ->middleware(['web', 'auth:admin'])
-    ->group(function () {
-        Route::smartBackup();
-    });
+## Notes
+
+Use Smart Backup command:
+
+```bash
+php artisan smart-backup:run
 ```
+
+Do not use Spatie directly when testing this package:
+
+```bash
+php artisan backup:run
+```
+
+because Smart Backup adds runtime configuration, database records, managed folder behavior, and cleanup logic.
 
 ---
 
-## API Usage
+## Troubleshooting
 
-### List Backups
+### `mysqldump` is not recognized
 
-```http
-GET /backup
-Accept: application/json
-```
+Set the path manually:
 
-With pagination:
-
-```http
-GET /backup?per_page=20
-Accept: application/json
-```
-
-### Create Backup
-
-```http
-POST /backup
-Accept: application/json
-```
-
-### Download Backup
-
-```http
-GET /backup/{id}/download
-```
-
-Example:
-
-```http
-GET /backup/1/download
-```
-
-### Delete Backup
-
-```http
-DELETE /backup/{id}
-Accept: application/json
-```
-
-Example:
-
-```http
-DELETE /backup/1
-Accept: application/json
-```
-
-### Bulk Delete Backups
-
-```http
-DELETE /backup
-Accept: application/json
-Content-Type: application/json
-```
-
-Body:
-
-```json
-{
-    "ids": [1, 2, 3]
-}
-```
-
----
-
-## Example Responses
-
-Create backup success:
-
-```json
-{
-    "success": true,
-    "message": "تم إنشاء النسخة الاحتياطية بنجاح.",
-    "result": {
-        "path": "backups/example.zip",
-        "name": "example.zip",
-        "status": "completed",
-        "message": "Backup completed successfully."
-    }
-}
-```
-
-Delete success:
-
-```json
-{
-    "success": true,
-    "message": "تم حذف النسخة الاحتياطية بنجاح."
-}
-```
-
-Bulk delete success:
-
-```json
-{
-    "success": true,
-    "message": "تم حذف النسخ الاحتياطية المحددة بنجاح.",
-    "deleted_count": 3
-}
-```
-
-File not found:
-
-```json
-{
-    "success": false,
-    "message": "ملف النسخة الاحتياطية غير موجود."
-}
-```
-
----
-
-## Local Path Development
-
-For local package development before publishing:
-
-```json
-{
-    "require": {
-        "karim-dev/smart-backup": "^1.0"
-    },
-    "repositories": [
-        {
-            "type": "path",
-            "url": "packages/Karim/SmartBackup",
-            "options": {
-                "symlink": true,
-                "versions": {
-                    "karim-dev/smart-backup": "1.0.0"
-                }
-            }
-        }
-    ]
-}
+```env
+SMART_BACKUP_MYSQL_DUMP_BINARY_PATH=C:/xampp/mysql/bin
 ```
 
 Then run:
 
 ```bash
-composer update karim-dev/smart-backup -W
-php artisan smart-backup:install
+php artisan optimize:clear
+php artisan smart-backup:run
+```
+
+---
+
+### `Mailer [] is not defined`
+
+For local testing, add:
+
+```env
+MAIL_MAILER=log
+```
+
+Then run:
+
+```bash
+php artisan optimize:clear
+```
+
+---
+
+### Duplicate migration
+
+If you published the migration twice, delete the extra migration file before running:
+
+```bash
 php artisan migrate
 ```
-
----
-
-## Release
-
-Do not add the package version inside `composer.json`.
-
-Create a Git tag instead:
-
-```bash
-git add .
-git commit -m "Release v1.0.0"
-git tag v1.0.0
-git push origin main
-git push origin v1.0.0
-```
-
-Users can then install:
-
-```bash
-composer require karim-dev/smart-backup:^1.0
-```
-
----
-
-## Notes
-
-- Restore is not implemented.
-- Views are not included.
-- Authorization is handled by the host application.
-- Protect backup routes with middleware.
-- Backup files may contain sensitive data.
 
 ---
 
@@ -407,11 +319,9 @@ composer require karim-dev/smart-backup:^1.0
 
 **Karim Mohamed**
 
-Package name:
+Package: `karim-dev/smart-backup`
 
-```text
-karim-dev/smart-backup
-```
+GitHub: [Kareem154](https://github.com/Kareem154)
 
 ---
 

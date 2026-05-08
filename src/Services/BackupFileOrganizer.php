@@ -5,6 +5,7 @@ namespace Karim\SmartBackup\Services;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use ZipArchive;
+use Throwable;
 
 class BackupFileOrganizer
 {
@@ -20,11 +21,16 @@ class BackupFileOrganizer
             throw new RuntimeException("Backup file does not exist: {$backupPath}");
         }
 
-        $fullPath = $disk->path($backupPath);
-        $tempPath = $fullPath . '.temp';
+        try {
+            $fullPath = $disk->path($backupPath);
+        } catch (Throwable) {
+            return $backupPath;
+        }
 
-        $zip = new ZipArchive();
-        $newZip = new ZipArchive();
+        $tempPath = $fullPath.'.temp';
+
+        $zip = new ZipArchive;
+        $newZip = new ZipArchive;
 
         if ($zip->open($fullPath) !== true) {
             throw new RuntimeException("Unable to open backup zip: {$backupPath}");
@@ -53,7 +59,7 @@ class BackupFileOrganizer
 
             $newFilename = str_starts_with($filename, 'db-dumps/')
                 ? $filename
-                : $projectFolder . '/' . ltrim($filename, '/');
+                : $projectFolder.'/'.ltrim($filename, '/');
 
             $newZip->addFromString($newFilename, $content);
         }
