@@ -24,13 +24,13 @@ Smart Backup uses `spatie/laravel-backup` internally, but adds a cleaner workflo
 ## Installation
 
 ```bash
-composer require karim-dev/smart-backup:^1.0
+composer require karim-dev/smart-backup
 ```
 
 If Composer needs to update related dependencies:
 
 ```bash
-composer require karim-dev/smart-backup:^1.0 -W
+composer require karim-dev/smart-backup -W
 ```
 
 Publish config and migration:
