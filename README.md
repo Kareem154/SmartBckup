@@ -8,6 +8,7 @@ Smart Backup uses `spatie/laravel-backup` internally, but adds a cleaner workflo
 - Saves backup records in the database.
 - Provides Artisan commands.
 - Provides optional routes for dashboard/API usage.
+- Supports single delete and bulk delete.
 - Automatically detects `mysqldump` when possible.
 - Saves backups in one managed folder, default: `backups`.
 
@@ -221,7 +222,9 @@ You do **not** need to edit `config/database.php`.
 
 Smart Backup registers a route macro.
 
-It does not load routes automatically.
+It does not load routes automatically, so you can register the routes wherever you want in your Laravel application.
+
+### Basic usage
 
 ```php
 use Illuminate\Support\Facades\Route;
@@ -229,25 +232,203 @@ use Illuminate\Support\Facades\Route;
 Route::smartBackup();
 ```
 
-Default routes:
+This will register the following routes:
 
 ```text
-GET     /backup
-POST    /backup
-GET     /backup/{backup}/download
-DELETE  /backup/{backup}
-DELETE  /backup
+GET     /backup                     backup.index
+POST    /backup                     backup.store
+GET     /backup/{backup}/download   backup.download
+DELETE  /backup/{backup}            backup.destroy
+DELETE  /backup                     backup.bulk-destroy
 ```
 
-Dashboard example:
+You can use the route names like this:
 
 ```php
+route('backup.index');
+route('backup.store');
+route('backup.download', $backup);
+route('backup.destroy', $backup);
+route('backup.bulk-destroy');
+```
+
+---
+
+### Dashboard usage
+
+You can register Smart Backup routes inside your dashboard route group:
+
+```php
+use Illuminate\Support\Facades\Route;
+
 Route::prefix('dashboard')
     ->name('dashboard.')
     ->middleware(['web', 'auth'])
     ->group(function () {
         Route::smartBackup();
     });
+```
+
+This will register the following routes:
+
+```text
+GET     /dashboard/backup                     dashboard.backup.index
+POST    /dashboard/backup                     dashboard.backup.store
+GET     /dashboard/backup/{backup}/download   dashboard.backup.download
+DELETE  /dashboard/backup/{backup}            dashboard.backup.destroy
+DELETE  /dashboard/backup                     dashboard.backup.bulk-destroy
+```
+
+You can use the route names like this:
+
+```php
+route('dashboard.backup.index');
+route('dashboard.backup.store');
+route('dashboard.backup.download', $backup);
+route('dashboard.backup.destroy', $backup);
+route('dashboard.backup.bulk-destroy');
+```
+
+---
+
+### Bulk delete
+
+The bulk delete route is:
+
+```text
+DELETE /backup
+```
+
+If you register the routes inside a dashboard group, it becomes:
+
+```text
+DELETE /dashboard/backup
+```
+
+The route name will be:
+
+```php
+route('backup.bulk-destroy');
+```
+
+Or inside dashboard:
+
+```php
+route('dashboard.backup.bulk-destroy');
+```
+
+It expects an array of backup IDs:
+
+```json
+{
+    "ids": [1, 2, 3]
+}
+```
+
+Blade form example:
+
+```blade
+<form method="POST" action="{{ route('dashboard.backup.bulk-destroy') }}">
+    @csrf
+    @method('DELETE')
+
+    <input type="hidden" name="ids[]" value="1">
+    <input type="hidden" name="ids[]" value="2">
+    <input type="hidden" name="ids[]" value="3">
+
+    <button type="submit">Delete selected backups</button>
+</form>
+```
+
+AJAX example:
+
+```js
+fetch("{{ route('dashboard.backup.bulk-destroy') }}", {
+    method: "DELETE",
+    headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "X-CSRF-TOKEN": "{{ csrf_token() }}"
+    },
+    body: JSON.stringify({
+        ids: [1, 2, 3]
+    })
+});
+```
+
+---
+
+### Custom prefix and route name
+
+You can customize the route prefix and route name:
+
+```php
+use Illuminate\Support\Facades\Route;
+
+Route::smartBackup([
+    'prefix' => 'backups',
+    'name' => 'backups.',
+]);
+```
+
+This will register routes like:
+
+```text
+GET     /backups                     backups.index
+POST    /backups                     backups.store
+GET     /backups/{backup}/download   backups.download
+DELETE  /backups/{backup}            backups.destroy
+DELETE  /backups                     backups.bulk-destroy
+```
+
+You can use them like this:
+
+```php
+route('backups.index');
+route('backups.store');
+route('backups.download', $backup);
+route('backups.destroy', $backup);
+route('backups.bulk-destroy');
+```
+
+---
+
+### Custom dashboard prefix and route name
+
+You can also combine dashboard grouping with custom Smart Backup options:
+
+```php
+use Illuminate\Support\Facades\Route;
+
+Route::prefix('dashboard')
+    ->name('dashboard.')
+    ->middleware(['web', 'auth'])
+    ->group(function () {
+        Route::smartBackup([
+            'prefix' => 'backups',
+            'name' => 'backups.',
+        ]);
+    });
+```
+
+This will register routes like:
+
+```text
+GET     /dashboard/backups                     dashboard.backups.index
+POST    /dashboard/backups                     dashboard.backups.store
+GET     /dashboard/backups/{backup}/download   dashboard.backups.download
+DELETE  /dashboard/backups/{backup}            dashboard.backups.destroy
+DELETE  /dashboard/backups                     dashboard.backups.bulk-destroy
+```
+
+You can use them like this:
+
+```php
+route('dashboard.backups.index');
+route('dashboard.backups.store');
+route('dashboard.backups.download', $backup);
+route('dashboard.backups.destroy', $backup);
+route('dashboard.backups.bulk-destroy');
 ```
 
 ---
