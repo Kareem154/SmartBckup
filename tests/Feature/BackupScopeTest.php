@@ -42,24 +42,20 @@ class BackupScopeTest extends TestCase
         // 3. Verify the runtime configuration that Spatie Backup will use
         $spatieConfig = config('backup');
         
-        // Assert relative_path is base_path() - this ensures "storage/app" appears as "storage/app" in the zip
-        $this->assertEquals(
-            str_replace('\\', '/', base_path()),
+        $this->assertSame(
+            realpath(base_path()) ?: base_path(),
             $spatieConfig['backup']['source']['files']['relative_path'],
-            'The relative path must be the project base_path to avoid absolute drive letters like C:\.'
-        );
-        
-        // Assert include paths are correctly set and normalized
-        $expectedIncludes = array_map(fn($p) => str_replace('\\', '/', $p), $paths);
-        $this->assertEquals(
-            $expectedIncludes,
-            $spatieConfig['backup']['source']['files']['include'],
-            'The include paths must match the configured storage paths.'
+            'relative_path must match canonical project root so Spatie Zip strips to storage/... paths.'
         );
 
-        // Verify that the entire project root is NOT included
+        $this->assertEquals(
+            $paths,
+            $spatieConfig['backup']['source']['files']['include'],
+            'Include paths must stay OS-native (do not force forward slashes on Windows).'
+        );
+
         $this->assertNotContains(
-            str_replace('\\', '/', base_path()),
+            base_path(),
             $spatieConfig['backup']['source']['files']['include'],
             'The project root should not be included in the backup, only the specific storage paths.'
         );
@@ -85,7 +81,7 @@ class BackupScopeTest extends TestCase
         $spatieConfig = config('backup');
         
         $this->assertContains(
-            str_replace('\\', '/', storage_path()),
+            storage_path(),
             $spatieConfig['backup']['source']['files']['include'],
             'The entire storage folder should be included in the backup include list.'
         );

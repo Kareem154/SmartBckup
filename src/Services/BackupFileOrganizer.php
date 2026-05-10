@@ -2,6 +2,7 @@
 
 namespace Karim\SmartBackup\Services;
 
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use ZipArchive;
@@ -11,7 +12,7 @@ class BackupFileOrganizer
 {
     public function reorganize(string $backupPath): string
     {
-        if (! config('smart-backup.reorganize_zip', true)) {
+        if (! filter_var(config('smart-backup.reorganize_zip', false), FILTER_VALIDATE_BOOLEAN)) {
             return $backupPath;
         }
 
@@ -19,6 +20,32 @@ class BackupFileOrganizer
 
         if (! $disk->exists($backupPath)) {
             throw new RuntimeException("Backup file does not exist: {$backupPath}");
+        }
+
+        try {
+            $archiveBytes = $disk->size($backupPath);
+        } catch (Throwable) {
+            $archiveBytes = null;
+        }
+
+        $maxBytes = (int) config('smart-backup.reorganize_zip_max_bytes', 1024 * 1024 * 1024);
+
+        if ($archiveBytes !== null && $maxBytes > 0 && $archiveBytes > $maxBytes) {
+            if (filter_var(config('smart-backup.reorganize_zip_strict', false), FILTER_VALIDATE_BOOLEAN)) {
+                throw new RuntimeException(
+                    'Smart Backup: reorganize_zip is enabled but this archive ('.(string) $archiveBytes.' bytes) exceeds '.
+                    'reorganize_zip_max_bytes ('.(string) $maxBytes.'). Keep reorganize_zip disabled for large backups '.
+                    'or use server-level backups.'
+                );
+            }
+
+            Log::warning('Smart Backup skipped reorganize_zip: archive exceeds reorganize_zip_max_bytes.', [
+                'backup_path' => $backupPath,
+                'archive_bytes' => $archiveBytes,
+                'max_bytes' => $maxBytes,
+            ]);
+
+            return $backupPath;
         }
 
         try {

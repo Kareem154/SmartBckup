@@ -2,13 +2,14 @@
 
 namespace Karim\SmartBackup\Services;
 
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Karim\SmartBackup\Models\Backup;
 use Karim\SmartBackup\Enums\BackupType;
 use RuntimeException;
 use Spatie\Backup\Config\Config as SpatieBackupConfig;
+use Spatie\Backup\Exceptions\BackupFailed;
+use Spatie\Backup\Tasks\Backup\BackupJobFactory;
 use Throwable;
 
 class BackupManager
@@ -17,7 +18,7 @@ class BackupManager
      * Run a new smart backup.
      *
      * This method creates a database record, configures Spatie Laravel Backup
-     * at runtime, runs the backup command, then stores the final backup metadata.
+     * at runtime, runs Spatie's BackupJob, then stores the final backup metadata.
      *
      * The host Laravel application should not need to manually configure
      * mysqldump inside config/database.php. Smart Backup tries to detect and
@@ -70,44 +71,13 @@ class BackupManager
                 fn () => new SmartBackupTemporaryDirectory($temporaryDirectory)
             );
 
-            app()->forgetInstance(SpatieBackupConfig::class);
-
-            app()->instance(
-                SpatieBackupConfig::class,
-                SpatieBackupConfig::fromArray(config('backup'))
-            );
-
-            $options = [];
-            if (! $withDatabase) {
-                $options['--only-files'] = true;
-            }
-            if (! $withStorage) {
-                $options['--only-db'] = true;
-            }
-
-            $exitCode = Artisan::call(
-                config('smart-backup.spatie_command', 'backup:run'),
-                $options
-            );
-
-            $output = trim(Artisan::output());
-
             /*
-             * Some Spatie versions may return a successful console exit code
-             * while still printing a backup failure message. We detect both the
-             * exit code and known failure text to avoid hiding the real error
-             * behind "No backup zip files found".
+             * Do not use Artisan::call('backup:run'): BackupCommand is constructed at application
+             * bootstrap with Spatie's default Config (typically base_path() for files). Rebidding
+             * Config later does not replace that injected instance, so the zip would still include
+             * the whole project. Run BackupJob with the fresh Config bound in configureSpatieBackup().
              */
-            if (
-                $exitCode !== 0
-                || str_contains($output, 'Backup failed because')
-                || str_contains($output, 'The dump process failed')
-            ) {
-                throw new RuntimeException($output !== ''
-                    ? "Spatie backup command failed: {$output}"
-                    : "Spatie backup command failed with exit code {$exitCode}."
-                );
-            }
+            $output = $this->runSpatieBackupJob($withDatabase, $withStorage);
 
             try {
                 $latestBackupPath = app(BackupFileFinder::class)->latest();
@@ -344,9 +314,15 @@ class BackupManager
          */
         data_set($runtimeConfig, 'backup.name', $backupFolderName);
         data_set($runtimeConfig, 'backup.temporary_directory', str_replace('\\', '/', $temporaryDirectory));
-        data_set($runtimeConfig, 'backup.source.files.include', array_map(fn($p) => str_replace('\\', '/', $p), $sourcePaths));
-        data_set($runtimeConfig, 'backup.source.files.exclude', array_map(fn($p) => str_replace('\\', '/', $p), $excludedSourcePaths));
-        data_set($runtimeConfig, 'backup.source.files.relative_path', str_replace('\\', '/', base_path()));
+        /*
+         * Keep native directory separators for includes/excludes. Spatie's Zip strips entries using
+         * Str::startsWith(pathinfo dirname, relative_path); forward-slash includes with Windows
+         * backslash pathnames makes the prefix check fail, so the zip keeps full C:\... paths.
+         */
+        data_set($runtimeConfig, 'backup.source.files.include', $sourcePaths);
+        data_set($runtimeConfig, 'backup.source.files.exclude', $excludedSourcePaths);
+        $projectRoot = realpath(base_path()) ?: base_path();
+        data_set($runtimeConfig, 'backup.source.files.relative_path', $projectRoot);
         data_set($runtimeConfig, 'backup.source.databases', $withDatabase ? $this->backupDatabaseConnectionNames() : []);
 
         /*
@@ -439,6 +415,37 @@ class BackupManager
             SpatieBackupConfig::class,
             SpatieBackupConfig::fromArray(config('backup'))
         );
+    }
+
+    /**
+     * Execute Spatie's BackupJob using the Config instance bound in configureSpatieBackup().
+     */
+    private function runSpatieBackupJob(bool $withDatabase, bool $withStorage): string
+    {
+        $job = BackupJobFactory::createFromConfig(app(SpatieBackupConfig::class));
+
+        if (! $withStorage) {
+            $job->dontBackupFilesystem();
+        }
+
+        if (! $withDatabase) {
+            $job->dontBackupDatabases();
+        }
+
+        // Avoid SIGINT registration (missing/broken on Windows; unnecessary for non-interactive run).
+        $job->disableSignals();
+
+        try {
+            $job->run();
+        } catch (BackupFailed $e) {
+            throw new RuntimeException(
+                'Spatie backup failed: '.$e->getMessage(),
+                0,
+                $e
+            );
+        }
+
+        return 'Backup completed successfully.';
     }
 
     /**

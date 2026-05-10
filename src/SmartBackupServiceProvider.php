@@ -4,6 +4,8 @@ namespace Karim\SmartBackup;
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use Karim\SmartBackup\BackupEngine\BackupWorkflow;
+use Spatie\Backup\Config\Config as SpatieBackupConfig;
 use Karim\SmartBackup\Console\DeleteSmartBackupCommand;
 use Karim\SmartBackup\Console\DatabaseOnlySmartBackupCommand;
 use Karim\SmartBackup\Console\InstallSmartBackupCommand;

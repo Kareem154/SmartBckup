@@ -11,7 +11,7 @@ use Karim\SmartBackup\Models\Backup;
 use Karim\SmartBackup\Services\BackupCleaner;
 use Karim\SmartBackup\Services\BackupManager;
 use Karim\SmartBackup\Enums\BackupType;
-use Karim\SmartBackup\Jobs\RunSmartBackupJob;
+use Karim\SmartBackup\Jobs\RunBackupJob;
 use Illuminate\Validation\Rule;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;

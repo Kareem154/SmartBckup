@@ -11,9 +11,10 @@ return [
     'source_folder' => env('SMART_BACKUP_SOURCE_FOLDER'),
 
     'source' => [
-        'paths' => [
-            storage_path(),
-        ],
+        'paths' => array_values(array_filter([
+            storage_path('app'),
+            is_dir(storage_path('demo')) ? storage_path('demo') : null,
+        ])),
 
         'exclude' => [
             storage_path('app/backups'),
@@ -41,8 +42,16 @@ return [
     | Set to false (recommended) to skip this step and allow backups of any
     | size regardless of PHP memory_limit.
     |
+    | reorganize_zip_max_bytes: if the archive is larger than this, reorganize
+    | is skipped (with a warning) unless reorganize_zip_strict is true, which
+    | throws instead. Set to 0 to disable the guard.
+    |
     */
     'reorganize_zip' => env('SMART_BACKUP_REORGANIZE_ZIP', false),
+
+    'reorganize_zip_max_bytes' => (int) env('SMART_BACKUP_REORGANIZE_ZIP_MAX_BYTES', 1024 * 1024 * 1024),
+
+    'reorganize_zip_strict' => env('SMART_BACKUP_REORGANIZE_ZIP_STRICT', false),
 
     'project_folder_prefix' => env('SMART_BACKUP_PROJECT_FOLDER_PREFIX', 'backup-project'),
 
