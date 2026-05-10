@@ -77,8 +77,17 @@ class BackupManager
                 SpatieBackupConfig::fromArray(config('backup'))
             );
 
+            $options = [];
+            if (! $withDatabase) {
+                $options['--only-files'] = true;
+            }
+            if (! $withStorage) {
+                $options['--only-db'] = true;
+            }
+
             $exitCode = Artisan::call(
-                config('smart-backup.spatie_command', 'backup:run')
+                config('smart-backup.spatie_command', 'backup:run'),
+                $options
             );
 
             $output = trim(Artisan::output());
@@ -334,10 +343,10 @@ class BackupManager
          * directory instead of using the host application's APP_NAME.
          */
         data_set($runtimeConfig, 'backup.name', $backupFolderName);
-        data_set($runtimeConfig, 'backup.temporary_directory', $temporaryDirectory);
-        data_set($runtimeConfig, 'backup.source.files.include', $sourcePaths);
-        data_set($runtimeConfig, 'backup.source.files.exclude', $excludedSourcePaths);
-        data_set($runtimeConfig, 'backup.source.files.relative_path', storage_path());
+        data_set($runtimeConfig, 'backup.temporary_directory', str_replace('\\', '/', $temporaryDirectory));
+        data_set($runtimeConfig, 'backup.source.files.include', array_map(fn($p) => str_replace('\\', '/', $p), $sourcePaths));
+        data_set($runtimeConfig, 'backup.source.files.exclude', array_map(fn($p) => str_replace('\\', '/', $p), $excludedSourcePaths));
+        data_set($runtimeConfig, 'backup.source.files.relative_path', str_replace('\\', '/', storage_path()));
         data_set($runtimeConfig, 'backup.source.databases', $withDatabase ? $this->backupDatabaseConnectionNames() : []);
 
         /*
