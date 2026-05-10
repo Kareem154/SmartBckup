@@ -346,7 +346,7 @@ class BackupManager
         data_set($runtimeConfig, 'backup.temporary_directory', str_replace('\\', '/', $temporaryDirectory));
         data_set($runtimeConfig, 'backup.source.files.include', array_map(fn($p) => str_replace('\\', '/', $p), $sourcePaths));
         data_set($runtimeConfig, 'backup.source.files.exclude', array_map(fn($p) => str_replace('\\', '/', $p), $excludedSourcePaths));
-        data_set($runtimeConfig, 'backup.source.files.relative_path', str_replace('\\', '/', storage_path()));
+        data_set($runtimeConfig, 'backup.source.files.relative_path', str_replace('\\', '/', base_path()));
         data_set($runtimeConfig, 'backup.source.databases', $withDatabase ? $this->backupDatabaseConnectionNames() : []);
 
         /*
@@ -448,7 +448,7 @@ class BackupManager
      */
     private function backupSourcePaths(): array
     {
-        return collect(config('smart-backup.source.paths', [storage_path('app')]))
+        return collect(config('smart-backup.source.paths', [storage_path()]))
             ->filter(fn (string $path): bool => file_exists($path))
             ->values()
             ->all();

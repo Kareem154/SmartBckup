@@ -12,8 +12,7 @@ return [
 
     'source' => [
         'paths' => [
-            storage_path('app'),
-            storage_path('demo'),
+            storage_path(),
         ],
 
         'exclude' => [
@@ -23,6 +22,7 @@ return [
             storage_path('app/smart-backup-temp'),
             storage_path('framework'),
             storage_path('logs'),
+            storage_path('debugbar'),
         ],
     ],
 
