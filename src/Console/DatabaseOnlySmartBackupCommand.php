@@ -6,18 +6,18 @@ use Illuminate\Console\Command;
 use Karim\SmartBackup\Services\BackupManager;
 use Throwable;
 
-class RunSmartBackupCommand extends Command
+class DatabaseOnlySmartBackupCommand extends Command
 {
-    protected $signature = 'smart-backup:run';
+    protected $signature = 'smart-backup:database';
 
-    protected $description = 'Run a new database and storage backup.';
+    protected $description = 'Run a new database backup only.';
 
     public function handle(BackupManager $backupManager): int
     {
-        $this->info('Starting smart backup...');
+        $this->info('Starting database-only smart backup...');
 
         try {
-            $result = $backupManager->run();
+            $result = $backupManager->run(withDatabase: true, withStorage: false);
 
             $this->info($result->message);
             $this->line('Name: ' . $result->name);

@@ -47,10 +47,22 @@ php artisan migrate
 
 ## Usage
 
-Create a backup:
+Create a full backup (database + storage):
 
 ```bash
 php artisan smart-backup:run
+```
+
+Create a database-only backup:
+
+```bash
+php artisan smart-backup:database
+```
+
+Create a storage-only backup:
+
+```bash
+php artisan smart-backup:storage
 ```
 
 List backups:
@@ -251,6 +263,46 @@ route('backup.download', $backup);
 route('backup.destroy', $backup);
 route('backup.bulk-destroy');
 ```
+
+---
+
+### Creating Backups via API / Dashboard
+
+When creating a backup via the `backup.store` endpoint (POST `/backup`), the process runs as a **Queue Job** (`RunSmartBackupJob`) in the background. This ensures your web requests never timeout.
+
+You can specify the backup type by passing it in the JSON payload.
+
+**Full Backup:**
+```json
+{
+    "type": "full"
+}
+```
+
+**Database Only:**
+```json
+{
+    "type": "database"
+}
+```
+
+**Storage Only:**
+```json
+{
+    "type": "storage"
+}
+```
+
+The endpoint will respond instantly with:
+```json
+{
+    "success": true,
+    "queued": true,
+    "message": "تم وضع النسخة الاحتياطية في الطابور بنجاح وسيتم تنفيذها في الخلفية."
+}
+```
+
+> **Note:** If your `.env` is set to `QUEUE_CONNECTION=sync`, the backup will run immediately and wait to finish. If set to `database` or `redis`, you must have `php artisan queue:work` running on your server.
 
 ---
 

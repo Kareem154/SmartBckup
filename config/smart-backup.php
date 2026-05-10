@@ -30,7 +30,19 @@ return [
 
     'prevent_delete_last_backup' => env('SMART_BACKUP_PREVENT_DELETE_LAST', true),
 
-    'reorganize_zip' => env('SMART_BACKUP_REORGANIZE_ZIP', true),
+    /*
+    |--------------------------------------------------------------------------
+    | Reorganize ZIP
+    |--------------------------------------------------------------------------
+    | When enabled, Smart Backup re-packs the generated ZIP to clean up
+    | internal folder names. This reads every file in the ZIP into PHP memory,
+    | so it will fail for very large backups if memory_limit is too low.
+    |
+    | Set to false (recommended) to skip this step and allow backups of any
+    | size regardless of PHP memory_limit.
+    |
+    */
+    'reorganize_zip' => env('SMART_BACKUP_REORGANIZE_ZIP', false),
 
     'project_folder_prefix' => env('SMART_BACKUP_PROJECT_FOLDER_PREFIX', 'backup-project'),
 

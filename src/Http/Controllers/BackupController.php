@@ -10,6 +10,9 @@ use Karim\SmartBackup\Http\Resources\BackupResource;
 use Karim\SmartBackup\Models\Backup;
 use Karim\SmartBackup\Services\BackupCleaner;
 use Karim\SmartBackup\Services\BackupManager;
+use Karim\SmartBackup\Enums\BackupType;
+use Karim\SmartBackup\Jobs\RunSmartBackupJob;
+use Illuminate\Validation\Rule;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
@@ -32,22 +35,32 @@ class BackupController extends Controller
     /**
      * Create a new backup record and backup archive.
      */
-    public function store(BackupManager $backupManager): JsonResponse
+    public function store(Request $request): JsonResponse
     {
+        $request->validate([
+            'type' => ['nullable', Rule::in([
+                BackupType::FULL->value,
+                BackupType::DATABASE->value,
+                BackupType::STORAGE->value,
+            ])],
+        ]);
+
+        $type = BackupType::tryFrom(
+            $request->input('type', BackupType::FULL->value)
+        ) ?? BackupType::FULL;
+
         try {
-            // Run a new backup using the package backup manager.
-            $result = $backupManager->run();
+            RunSmartBackupJob::dispatch($type);
 
             return response()->json([
                 'success' => true,
-                'message' => 'تم إنشاء النسخة الاحتياطية بنجاح.',
-                'result' => $result->toArray(),
-                'data' => new BackupResource($result->backup),
+                'queued' => true,
+                'message' => 'تم وضع النسخة الاحتياطية في الطابور بنجاح وسيتم تنفيذها في الخلفية.',
             ]);
         } catch (Throwable $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'فشل إنشاء النسخة الاحتياطية.',
+                'message' => 'فشل إضافة النسخة الاحتياطية للطابور.',
                 'error' => $e->getMessage(),
             ], 500);
         }

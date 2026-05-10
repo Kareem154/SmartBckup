@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Karim\SmartBackup\Models\Backup;
+use Karim\SmartBackup\Enums\BackupType;
 use RuntimeException;
 use Spatie\Backup\Config\Config as SpatieBackupConfig;
 use Throwable;
@@ -24,14 +25,22 @@ class BackupManager
      *
      * @throws \Throwable
      */
-    public function run(): BackupRunResult
+    public function run(bool $withDatabase = true, bool $withStorage = true): BackupRunResult
     {
+        if (! $withDatabase && ! $withStorage) {
+            throw new RuntimeException('At least one backup source must be enabled.');
+        }
+
+        $type = $withDatabase && $withStorage ? BackupType::FULL : ($withDatabase ? BackupType::DATABASE : BackupType::STORAGE);
+        $prefix = $type->value . '-backup-';
+
         $diskName = config('smart-backup.disk', 'local');
 
         $backup = Backup::query()->create([
-            'name' => 'backup-running-'.now()->format('Y-m-d_H-i-s').'.zip',
+            'name' => $prefix . now()->format('Y-m-d_H-i-s') . '.zip',
             'disk' => $diskName,
             'path' => '',
+            'type' => $type->value,
             'status' => 'running',
             'started_at' => now(),
         ]);
@@ -45,8 +54,11 @@ class BackupManager
              * config. This ensures Spatie receives the updated database connection
              * dump settings when it creates the backup job.
              */
-            $this->configureDatabaseDumpPath();
-            $this->configureSpatieBackup($temporaryDirectory);
+            if ($withDatabase) {
+                $this->configureDatabaseDumpPath();
+            }
+
+            $this->configureSpatieBackup($temporaryDirectory, $withDatabase, $withStorage);
 
             /*
              * Spatie resolves this binding internally for its temporary project
@@ -159,6 +171,15 @@ class BackupManager
      * Spatie may generate the zip inside a folder named after the host application.
      * Smart Backup keeps only the managed copy and removes the original generated
      * file to avoid duplicated backup folders.
+     *
+     * Strategy (in order of preference):
+     *
+     * 1. disk->move()  — atomic rename, zero RAM, instant. Works on local disks.
+     * 2. Stream fallback — pipes the file chunk-by-chunk using readStream /
+     *    writeStream. Zero RAM, compatible with S3, FTP, and remote disks that
+     *    do not support atomic renames.
+     *
+     * Both strategies are memory-safe and support backup files of any size.
      */
     private function moveToManagedDirectory(string $sourcePath): string
     {
@@ -182,22 +203,49 @@ class BackupManager
         }
 
         /*
-         * Copy the generated zip to the managed backup directory first.
-         * We delete the original only after the destination copy exists.
+         * Attempt 1: atomic filesystem rename.
+         * Uses zero RAM and is instant on local disks.
+         * Some cloud/remote drivers (S3, FTP) may return false here.
          */
-        $disk->put($destinationPath, $disk->get($sourcePath));
+        if ($disk->move($sourcePath, $destinationPath)) {
+            $this->deleteEmptyParentDirectory($sourcePath, $directory);
 
-        if (! $disk->exists($destinationPath)) {
-            throw new RuntimeException("Unable to move backup file to managed directory: {$destinationPath}");
+            return $destinationPath;
         }
 
         /*
-         * Remove Spatie's original generated zip so the disk contains only
-         * Smart Backup's managed backup folder.
+         * Attempt 2: stream-based fallback (memory-safe copy + delete).
+         *
+         * readStream() opens the source as a PHP resource stream and
+         * writeStream() pipes it to the destination chunk-by-chunk, never
+         * loading the full file into RAM. This works correctly on:
+         *   - Amazon S3
+         *   - FTP / SFTP
+         *   - Any Flysystem-compatible remote driver
          */
-        if ($disk->exists($sourcePath)) {
-            $disk->delete($sourcePath);
+        $readStream = $disk->readStream($sourcePath);
+
+        if (! is_resource($readStream)) {
+            throw new RuntimeException(
+                "Unable to open source backup file as a stream: {$sourcePath}"
+            );
         }
+
+        try {
+            $disk->writeStream($destinationPath, $readStream);
+        } finally {
+            if (is_resource($readStream)) {
+                fclose($readStream);
+            }
+        }
+
+        if (! $disk->exists($destinationPath)) {
+            throw new RuntimeException(
+                "Stream copy succeeded but destination file was not found: {$destinationPath}"
+            );
+        }
+
+        $disk->delete($sourcePath);
 
         $this->deleteEmptyParentDirectory($sourcePath, $directory);
 
@@ -264,12 +312,12 @@ class BackupManager
      * This method changes Spatie's backup name, temporary directory, source
      * paths, excluded paths, relative path, and database list at runtime.
      */
-    private function configureSpatieBackup(string $temporaryDirectory): void
+    private function configureSpatieBackup(string $temporaryDirectory, bool $withDatabase, bool $withStorage): void
     {
-        $sourcePaths = $this->backupSourcePaths();
-        $excludedSourcePaths = $this->excludedSourcePaths();
+        $sourcePaths = $withStorage ? $this->backupSourcePaths() : [];
+        $excludedSourcePaths = $withStorage ? $this->excludedSourcePaths() : [];
 
-        if ($sourcePaths === []) {
+        if ($withStorage && $sourcePaths === []) {
             throw new RuntimeException('No backup source paths exist.');
         }
 
@@ -290,7 +338,7 @@ class BackupManager
         data_set($runtimeConfig, 'backup.source.files.include', $sourcePaths);
         data_set($runtimeConfig, 'backup.source.files.exclude', $excludedSourcePaths);
         data_set($runtimeConfig, 'backup.source.files.relative_path', storage_path());
-        data_set($runtimeConfig, 'backup.source.databases', $this->backupDatabaseConnectionNames());
+        data_set($runtimeConfig, 'backup.source.databases', $withDatabase ? $this->backupDatabaseConnectionNames() : []);
 
         /*
          * Important:

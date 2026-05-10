@@ -5,9 +5,11 @@ namespace Karim\SmartBackup;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Karim\SmartBackup\Console\DeleteSmartBackupCommand;
+use Karim\SmartBackup\Console\DatabaseOnlySmartBackupCommand;
 use Karim\SmartBackup\Console\InstallSmartBackupCommand;
 use Karim\SmartBackup\Console\ListSmartBackupsCommand;
 use Karim\SmartBackup\Console\RunSmartBackupCommand;
+use Karim\SmartBackup\Console\StorageOnlySmartBackupCommand;
 use Karim\SmartBackup\Http\Controllers\BackupController;
 
 class SmartBackupServiceProvider extends ServiceProvider
@@ -48,6 +50,8 @@ class SmartBackupServiceProvider extends ServiceProvider
                 InstallSmartBackupCommand::class,
                 ListSmartBackupsCommand::class,
                 RunSmartBackupCommand::class,
+                DatabaseOnlySmartBackupCommand::class,
+                StorageOnlySmartBackupCommand::class,
                 DeleteSmartBackupCommand::class,
             ]);
         }
